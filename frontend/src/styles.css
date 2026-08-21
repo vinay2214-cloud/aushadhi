@@ -1,0 +1,388 @@
+@import "tailwindcss" source(none);
+@source "../src";
+
+/*
+ * AUSHADHI design system.
+ * Near-black surfaces, borders instead of shadows, colour reserved for status.
+ * Every token below is the single source of truth — components reference these
+ * through Tailwind's utility scales, which are remapped onto them in @theme.
+ */
+
+:root {
+  /* Surfaces */
+  --bg-base: #09090b;
+  --bg-surface: #111113;
+  --bg-surface-hover: #161618;
+
+  /* Borders */
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-default: rgba(255, 255, 255, 0.1);
+
+  /* Text */
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #52525b;
+
+  /* Status */
+  --critical: #ef4444;
+  --warning: #f59e0b;
+  --success: #22c55e;
+  --outbreak: #f97316;
+  --accent: #3b82f6;
+  --gemini: #a855f7;
+
+  /* Cards are 8px, nothing rounder. */
+  --radius: 8px;
+}
+
+@theme inline {
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 8px;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-background: var(--bg-base);
+  --color-foreground: var(--text-primary);
+  --color-surface: var(--bg-surface);
+  --color-card: var(--bg-surface);
+  --color-card-foreground: var(--text-primary);
+  --color-popover: var(--bg-surface);
+  --color-popover-foreground: var(--text-primary);
+  --color-primary: var(--success);
+  --color-primary-foreground: var(--bg-base);
+  --color-secondary: var(--bg-surface-hover);
+  --color-secondary-foreground: var(--text-primary);
+  --color-muted: var(--bg-surface-hover);
+  --color-muted-foreground: var(--text-secondary);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--text-primary);
+  --color-danger: var(--critical);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-destructive: var(--critical);
+  --color-destructive-foreground: var(--text-primary);
+  --color-border: var(--border-subtle);
+  --color-border-strong: var(--border-default);
+  --color-input: var(--border-default);
+  --color-ring: var(--accent);
+}
+
+/*
+ * Utility scales remapped onto the tokens, so existing bg-slate-950 /
+ * text-red-400 style classes resolve to the design system without every
+ * component hard-coding hex values.
+ */
+@theme {
+  --color-slate-950: #09090b;
+  --color-slate-900: #111113;
+  --color-slate-850: #0d0d0f;
+  --color-slate-800: #1a1a1e;
+  --color-slate-700: #27272a;
+  --color-slate-600: #52525b;
+  --color-slate-500: #71717a;
+  --color-slate-400: #a1a1aa;
+  --color-slate-300: #d4d4d8;
+  --color-slate-200: #e4e4e7;
+  --color-slate-100: #fafafa;
+  --color-slate-50: #ffffff;
+
+  --color-emerald-600: #16a34a;
+  --color-emerald-500: #22c55e;
+  --color-emerald-400: #22c55e;
+  --color-emerald-300: #4ade80;
+
+  --color-red-600: #dc2626;
+  --color-red-500: #ef4444;
+  --color-red-400: #ef4444;
+  --color-red-300: #f87171;
+
+  --color-orange-700: #ea580c;
+  --color-orange-600: #f97316;
+  --color-orange-500: #f97316;
+  --color-orange-400: #f97316;
+  --color-orange-300: #fb923c;
+
+  --color-amber-600: #d97706;
+  --color-amber-500: #f59e0b;
+  --color-amber-400: #f59e0b;
+  --color-amber-300: #fbbf24;
+
+  --color-blue-600: #2563eb;
+  --color-blue-500: #3b82f6;
+  --color-blue-400: #3b82f6;
+  --color-blue-300: #60a5fa;
+
+  --color-purple-500: #a855f7;
+  --color-purple-400: #a855f7;
+}
+
+/*
+ * Motion. Everything is <= 300ms except two deliberate exceptions:
+ * the 2s outbreak pulse and the 1.5s skeleton shimmer.
+ */
+@keyframes au-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes au-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes au-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes au-outbreak-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(1.35);
+  }
+}
+
+@utility au-fade {
+  animation: au-fade-in 150ms ease-out both;
+}
+
+@utility au-rise {
+  animation: au-slide-up 200ms ease-out both;
+}
+
+/* The one long-running decorative animation the design calls for. */
+@utility outbreak-pulse {
+  animation: au-outbreak-pulse 2s ease-in-out infinite;
+}
+
+@utility skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--bg-surface) 0%,
+    #1a1a1e 50%,
+    var(--bg-surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: au-shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius-md);
+}
+
+@utility panel-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+@utility card-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+@utility data-number {
+  font-size: 32px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+/* Status badge recipe — one class per state, exact tokens from the spec. */
+@utility badge-base {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+@utility badge-critical {
+  background-color: #ef44441a;
+  color: #ef4444;
+  border: 1px solid #ef44443a;
+}
+
+@utility badge-warning {
+  background-color: #f59e0b1a;
+  color: #f59e0b;
+  border: 1px solid #f59e0b3a;
+}
+
+@utility badge-success {
+  background-color: #22c55e1a;
+  color: #22c55e;
+  border: 1px solid #22c55e3a;
+}
+
+@utility badge-outbreak {
+  background-color: #f973161a;
+  color: #f97316;
+  border: 1px solid #f973163a;
+}
+
+@utility badge-neutral {
+  background-color: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+/*
+ * Landing page motion. These are the marketing-surface exceptions to the
+ * product's 300ms rule: entrance animations and the 2s live-status pulse.
+ */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes slide-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes card-rise {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@utility animate-fade-in {
+  animation: fade-in 0.5s ease-out both;
+}
+
+@utility animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@utility animate-card-rise {
+  animation: card-rise 0.6s ease-out 0.8s both;
+}
+
+@utility pipeline-step {
+  opacity: 0;
+  transform: translateX(-16px);
+  transition:
+    opacity 0.5s ease,
+    transform 0.5s ease;
+}
+
+@utility step-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* Respect users who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-card-rise,
+  .animate-pulse-dot,
+  .outbreak-pulse {
+    animation: none;
+  }
+  .pipeline-step {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--border-subtle);
+  }
+
+  body {
+    background-color: #09090b;
+    color: #fafafa;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.015em;
+  }
+
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+
+  button,
+  a {
+    transition:
+      background-color 150ms ease,
+      color 150ms ease,
+      border-color 150ms ease,
+      opacity 150ms ease;
+  }
+
+  ::selection {
+    background-color: rgba(59, 130, 246, 0.25);
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #27272a;
+    border-radius: 8px;
+  }
+}

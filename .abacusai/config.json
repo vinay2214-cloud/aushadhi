@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"/Volumes/Extreme SSD/AUSHADHI\" && python3 -c \"\nimport signal\ndef h(s,f): raise TimeoutError('timed out after 60s')\ns…)"
+    ]
+  }
+}
