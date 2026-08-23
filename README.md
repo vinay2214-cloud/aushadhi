@@ -1,28 +1,34 @@
-<![CDATA[<div align="center">
-
 # 🌿 AUSHADHI
 
 ### Autonomous Medicine Supply Intelligence
+
+<div align="center">
 
 **Medicine consumption → AI intelligence → autonomous action**
 
 *Five event-driven agents that watch rural health centers, validate incoming data, use Gemini to reason across consumption patterns, detect potential disease outbreaks, generate procurement orders, and alert the people who need to act — without a human orchestrating each step.*
 
----
+<br/>
 
 [![Live Demo](https://img.shields.io/badge/Live_Demo-Cloud_Run-4285F4?style=for-the-badge&logo=google-cloud&logoColor=white)](https://aushadhi-frontend-230802283586.us-central1.run.app)
 [![Demo Video](https://img.shields.io/badge/Demo_Video-YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://youtu.be/WIZl58Czcl0)
 [![Gemini 3.5 Flash](https://img.shields.io/badge/Gemini_3.5_Flash-Vertex_AI-8E75B2?style=for-the-badge&logo=google&logoColor=white)](#gemini--vertex-ai-implementation)
 [![Cloud Run](https://img.shields.io/badge/Cloud_Run-2_Services-4285F4?style=for-the-badge&logo=google-cloud&logoColor=white)](#deployment-architecture)
 
-| | |
+</div>
+
+---
+
+| Item | Details |
 |---|---|
 | **Hackathon** | [Google All Things Agentic Hackathon](https://googleai.devpost.com/) |
 | **Track** | **The Taskmaster** — Complete a Workflow, Not Just a Chatbot |
 | **Live App** | [aushadhi-frontend-230802283586.us-central1.run.app](https://aushadhi-frontend-230802283586.us-central1.run.app) |
-| **Demo** | [youtu.be/WIZl58Czcl0](https://youtu.be/WIZl58Czcl0) |
+| **Demo Video** | [youtu.be/WIZl58Czcl0](https://youtu.be/WIZl58Czcl0) |
 
 ---
+
+<div align="center">
 
 `5 Agents` · `8 Health Centers` · `10 Medicines` · `4 Pub/Sub Stages` · `Gemini 3.5 Flash` · `Vertex AI` · `Cloud Run` · `Firestore`
 
@@ -158,47 +164,47 @@ This is not a chatbot with automation. It is an operational loop.
 ```mermaid
 graph TB
     subgraph "Trigger"
-        CS[Cloud Scheduler<br>every 30 min]
-        API[Manual API Trigger<br>POST /internal/run-sentinel]
+        CS["Cloud Scheduler<br>every 30 min"]
+        API["Manual API Trigger<br>POST /internal/run-sentinel"]
     end
 
     subgraph "Agent Pipeline"
-        S[SENTINEL<br>Threshold Detection]
-        D[DQMS<br>6 Validation Rules]
-        F[FORECAST + OUTBREAK<br>Gemini 3.5 Flash]
-        P[PROCUREMENT<br>Haversine Routing]
-        A[ALERT + REPORT<br>Notification Dispatch]
+        S["SENTINEL<br>Threshold Detection"]
+        D["DQMS<br>6 Validation Rules"]
+        F["FORECAST + OUTBREAK<br>Gemini 3.5 Flash"]
+        P["PROCUREMENT<br>Haversine Routing"]
+        A["ALERT + REPORT<br>Notification Dispatch"]
     end
 
     subgraph "Event Bus — Google Cloud Pub/Sub"
-        T1[aushadhi-sentinel-alerts]
-        T2[aushadhi-validated-data]
-        T3[aushadhi-forecast-complete]
-        T4[aushadhi-procured]
-        DL[aushadhi-dead-letter]
+        T1["aushadhi-sentinel-alerts"]
+        T2["aushadhi-validated-data"]
+        T3["aushadhi-forecast-complete"]
+        T4["aushadhi-procured"]
+        DL["aushadhi-dead-letter"]
     end
 
     subgraph "State — Google Cloud Firestore"
-        HC[health_centers]
-        INV[inventory]
-        MED[medicines]
-        CR[consumption_records]
-        OA[outbreak_alerts]
-        PO[purchase_orders]
-        AL[agent_logs]
-        WH[warehouses]
-        NT[notifications]
-        SA[sentinel_alerts]
-        SC[system_config]
+        HC["health_centers"]
+        INV["inventory"]
+        MED["medicines"]
+        CR["consumption_records"]
+        OA["outbreak_alerts"]
+        PO["purchase_orders"]
+        AL["agent_logs"]
+        WH["warehouses"]
+        NT["notifications"]
+        SA["sentinel_alerts"]
+        SC["system_config"]
     end
 
     subgraph "Intelligence — Vertex AI"
-        G[Gemini 3.5 Flash<br>Thinking: low<br>Output: JSON]
+        G["Gemini 3.5 Flash<br>Thinking: low<br>Output: JSON"]
     end
 
     subgraph "Presentation"
-        FE[React Frontend<br>TanStack Start + SSE]
-        CR2[Cloud Run<br>2 services]
+        FE["React Frontend<br>TanStack Start + SSE"]
+        CR2["Cloud Run<br>2 services"]
     end
 
     CS --> S
@@ -1055,7 +1061,7 @@ Gemini 3.5 Flash is only served from the `global` Vertex AI endpoint. Regional e
 
 **AUSHADHI** turns delayed medicine-supply data into autonomous operational intelligence — watching health centers, validating signals, using Gemini to reason across consumption patterns, detecting potential outbreaks, generating procurement actions, and alerting the people who need to act.
 
-*Built for the [All Things Agentic Hackathon](https://googleai.devpost.com/) by Google.*
+*Built for the [All Things Agentic Hackathon](https://googleai.devpost.com/) by Google.*  
 *From Mandapeta, East Godavari — the district where this problem is personal.*
 
 ---
@@ -1063,4 +1069,3 @@ Gemini 3.5 Flash is only served from the `global` Vertex AI endpoint. Regional e
 `Google Gemini 3.5 Flash` · `Vertex AI` · `Cloud Run` · `Firestore` · `Pub/Sub` · `Cloud Scheduler`
 
 </div>
-]]>
