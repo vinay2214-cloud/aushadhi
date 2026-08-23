@@ -567,7 +567,12 @@ class FirestoreService:
         records: List[ConsumptionRecord] = []
         async for snap in query.stream():
             try:
-                records.append(ConsumptionRecord(**snap.to_dict()))
+                # scripts/seed_firestore.py writes these documents without an
+                # `id` field, which the model requires — fall back to the
+                # document id rather than dropping the whole history.
+                data = snap.to_dict() or {}
+                data.setdefault("id", snap.id)
+                records.append(ConsumptionRecord(**data))
             except Exception as exc:
                 log.error(
                     "firestore_model_validation_failed",

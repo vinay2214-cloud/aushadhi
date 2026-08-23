@@ -12,4 +12,9 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  // The wrapper defaults to `cloudflare-module`, which emits a Worker-style
+  // `export default { fetch }` — it binds no port, so `bun .output/server/index.mjs`
+  // exits immediately on Cloud Run and the container never answers on $PORT.
+  // The `bun` preset emits a real HTTP listener that honours HOST/PORT.
+  nitro: { preset: "bun" },
 });

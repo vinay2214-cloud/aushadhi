@@ -48,6 +48,11 @@ PULL_TIMEOUT_SECONDS = 20.0
 IDLE_SLEEP_SECONDS = 1.0
 #: Backoff after a subscriber loop error, so a broken loop does not hot-spin.
 ERROR_SLEEP_SECONDS = 5.0
+#: Ceiling on how long shutdown waits for in-flight handlers to unwind.
+SHUTDOWN_TIMEOUT_SECONDS = 5.0
+#: How often to sweep district buffers that are waiting on a message that
+#: never came. Without this a stalled buffer never resolves.
+BUFFER_SWEEP_SECONDS = 20.0
 
 
 class AushadhiOrchestrator:
@@ -77,6 +82,8 @@ class AushadhiOrchestrator:
 
         self._running = False
         self._tasks: List[asyncio.Task] = []
+        self._background_task: Optional[asyncio.Task] = None
+        self._started_at: Optional[float] = None
         self._last_activity = time.monotonic()
         self._messages_handled = 0
         # Handlers currently running. A long Gemini call (rate limiter +
@@ -102,6 +109,72 @@ class AushadhiOrchestrator:
         )
         return result
 
+    # ─────────────────────────── background runner ─────────────────────
+
+    def start_background(self) -> asyncio.Task:
+        """Run the subscriber loops as a task owned by this orchestrator.
+
+        Called from the API's lifespan so one `uvicorn main:app` starts the
+        agents too. Idempotent: a second call returns the running task rather
+        than opening a second set of subscribers.
+        """
+        if self._background_task is not None and not self._background_task.done():
+            return self._background_task
+
+        self._started_at = time.time()
+        self._background_task = asyncio.create_task(
+            self.start_subscribers(), name="agent-orchestrator"
+        )
+        log.info("agent_orchestrator_started", subscriptions=list(self.subscriptions))
+        return self._background_task
+
+    async def stop_background(self) -> None:
+        """Cancel the background task and release the subscriber loops."""
+        await self.stop()
+        task = self._background_task
+        self._background_task = None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=SHUTDOWN_TIMEOUT_SECONDS)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+        except Exception as exc:
+            log.warning(
+                "agent_orchestrator_stop_error",
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+        log.info("agent_orchestrator_stopped", messages_handled=self._messages_handled)
+
+    @property
+    def background_status(self) -> Dict[str, Any]:
+        """Snapshot for GET /api/v1/agents/orchestrator-status."""
+        task = self._background_task
+        running = bool(task is not None and not task.done())
+
+        failure: Optional[str] = None
+        if task is not None and task.done() and not task.cancelled():
+            exc = task.exception()
+            if exc is not None:
+                failure = f"{type(exc).__name__}: {exc}"
+
+        return {
+            "running": running,
+            # Healthy means the loops are up and none of them died with an error.
+            "healthy": running and failure is None,
+            "state": "running" if running else ("stopped" if task is not None else "not_started"),
+            "subscriptions": list(self.subscriptions),
+            "subscriber_loops": len(self._tasks),
+            "agents": [agent.name for agent in self.subscriptions.values()],
+            "messages_handled": self._messages_handled,
+            "in_flight": self._inflight,
+            "seconds_since_activity": round(self.seconds_since_activity, 1),
+            "uptime_seconds": round(time.time() - self._started_at, 1) if self._started_at else None,
+            "error": failure,
+        }
+
     # ───────────────────────────── subscribers ─────────────────────────
 
     async def start_subscribers(self) -> None:
@@ -114,6 +187,15 @@ class AushadhiOrchestrator:
             asyncio.create_task(self._subscribe(subscription, agent), name=f"sub:{subscription}")
             for subscription, agent in self.subscriptions.items()
         ]
+        self._tasks.append(asyncio.create_task(self._sweep_buffers(), name="buffer-sweeper"))
+
+        log.info(
+            "orchestrator_all_tasks_created",
+            task_count=len(self._tasks),
+            task_names=[t.get_name() for t in self._tasks],
+        )
+
+        # Blocks here until every loop stops or the gather is cancelled.
         try:
             await asyncio.gather(*self._tasks)
         except asyncio.CancelledError:
@@ -168,6 +250,23 @@ class AushadhiOrchestrator:
 
         return handler
 
+    async def _sweep_buffers(self) -> None:
+        """Timer that resolves district buffers stuck waiting for a late message."""
+        while self._running:
+            await asyncio.sleep(BUFFER_SWEEP_SECONDS)
+            try:
+                flushed = await self.forecast_agent.flush_stale()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error(
+                    "buffer_sweep_failed", error_type=type(exc).__name__, error=str(exc)
+                )
+                continue
+            if flushed:
+                self._mark_activity()
+                log.info("buffer_sweep_flushed", districts=len(flushed))
+
     async def stop(self) -> None:
         """Stop the subscriber loops and release clients."""
         self._running = False
@@ -177,6 +276,22 @@ class AushadhiOrchestrator:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
         log.info("orchestrator_stopped", messages_handled=self._messages_handled)
+
+    async def close(self) -> None:
+        """Release the Firestore and Pub/Sub gRPC clients.
+
+        Their channels run non-daemon threads, so a standalone worker will not
+        exit after shutdown unless they are closed explicitly.
+        """
+        try:
+            self.pubsub.close()
+        except Exception as exc:
+            log.warning("pubsub_close_failed", error_type=type(exc).__name__, error=str(exc))
+        try:
+            await self.firestore.close()
+        except Exception as exc:
+            log.warning("firestore_close_failed", error_type=type(exc).__name__, error=str(exc))
+        log.info("orchestrator_clients_closed")
 
     # ────────────────────────────── idle state ─────────────────────────
     # A cycle is "done" when nothing has moved for a while — used by the
@@ -227,3 +342,58 @@ class AushadhiOrchestrator:
 def get_orchestrator() -> AushadhiOrchestrator:
     """Process-wide orchestrator, shared by the API routes and the agent runner."""
     return AushadhiOrchestrator()
+
+
+if __name__ == "__main__":
+    # Standalone worker:  cd backend && python3 -m agents.orchestrator
+    #
+    # Only needed when running the agents apart from the API (separate Cloud Run
+    # service, or AGENTS_IN_PROCESS=false). The default deployment starts these
+    # same loops inside `uvicorn main:app`, so one process runs everything.
+    import signal
+
+    async def _main() -> None:
+        orchestrator = get_orchestrator()
+        stop_event = asyncio.Event()
+
+        def handle_signal() -> None:
+            log.info("orchestrator_stopping")
+            stop_event.set()
+
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, handle_signal)
+            except NotImplementedError:
+                # Windows event loops have no signal handler support.
+                signal.signal(sig, lambda *_: handle_signal())
+
+        subscriber_task = orchestrator.start_background()
+        log.info(
+            "orchestrator_started",
+            subscriptions=list(orchestrator.subscriptions),
+            agents=[agent.name for agent in orchestrator.subscriptions.values()],
+        )
+
+        log.info("orchestrator_running_waiting_for_messages")
+
+        # Block here until SIGINT/SIGTERM, or until the loops die on their own.
+        stopper = asyncio.create_task(stop_event.wait(), name="stop-signal")
+        done, _pending = await asyncio.wait(
+            {stopper, subscriber_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if subscriber_task in done and not subscriber_task.cancelled():
+            exc = subscriber_task.exception()
+            if exc is not None:
+                log.error(
+                    "orchestrator_subscribers_crashed",
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+        stopper.cancel()
+
+        await orchestrator.stop_background()
+        await orchestrator.close()
+        log.info("orchestrator_stopped")
+
+    asyncio.run(_main())

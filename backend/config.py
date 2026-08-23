@@ -63,9 +63,22 @@ class Settings(BaseSettings):
     app_name: str = "AUSHADHI"
     app_version: str = "1.0.0"
     run_mode: Literal["api", "agents"] = "api"
+    # The API process also runs the four Pub/Sub subscriber loops, so a single
+    # `uvicorn main:app` starts the whole system. Set false only when running
+    # multiple API replicas, where every replica would otherwise consume the
+    # same subscriptions and duplicate the Gemini calls.
+    agents_in_process: bool = True
     log_level: str = "INFO"
     environment: Literal["development", "staging", "production"] = "development"
+    # Browsers send the exact page origin, so every host the dashboard is
+    # served from has to be listed verbatim. Cloud Run answers on both URL
+    # forms for the same service (the project-number one and the legacy
+    # -mnpwpjt7xq-uc hash), and either can end up in the address bar — list
+    # both or a preflight from the other one comes back "Disallowed CORS
+    # origin". CORS_ORIGINS (comma-separated) overrides this default.
     cors_origins: List[str] = [
+        "https://aushadhi-frontend-230802283586.us-central1.run.app",
+        "https://aushadhi-frontend-mnpwpjt7xq-uc.a.run.app",
         "http://localhost:5173",
         "http://localhost:3000",
         "http://localhost:8080",  # Lovable dev server default

@@ -43,7 +43,7 @@ DEFAULT_PULL_TIMEOUT_SECONDS = 30.0
 #: message for minutes (Gemini rate limiting plus 503 backoff), and the
 #: subscriptions are created with a 120s deadline — without this extension
 #: Pub/Sub would redeliver mid-processing and duplicate the Gemini calls.
-LEASE_EXTENSION_SECONDS = 600
+LEASE_EXTENSION_SECONDS = 180
 
 
 class PubSubService:

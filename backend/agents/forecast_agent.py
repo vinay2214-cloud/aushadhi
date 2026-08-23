@@ -187,6 +187,33 @@ class ForecastOutbreakAgent(BaseAgent):
             "outbreak": outbreak_result,
         }
 
+    async def flush_stale(self, max_age_seconds: float = BUFFER_STALE_SECONDS) -> List[Dict[str, Any]]:
+        """Analyse district buffers that have waited longer than max_age_seconds.
+
+        Buffers used to be flushed only when the *next* message arrived, so a
+        cycle whose last center never reported left its district buffered
+        forever — no outbreak analysis, no forecast-complete message, and the
+        pipeline stopped dead with no error. The orchestrator now calls this on
+        a timer so a late or lost message costs one incomplete analysis instead
+        of the whole cycle.
+        """
+        async with self._buffer_lock:
+            aged = [key for key, buf in self._buffers.items() if buf.age_seconds > max_age_seconds]
+            buffers = [self._buffers.pop(key) for key in aged]
+
+        results = []
+        for buffer in buffers:
+            self.log.warning(
+                "forecast_buffer_timed_out",
+                cycle_id=buffer.cycle_id,
+                district=buffer.district,
+                have=len(buffer.centers),
+                expected=buffer.expected,
+                age_seconds=round(buffer.age_seconds, 1),
+            )
+            results.append(await self._analyze_and_publish(buffer))
+        return results
+
     async def flush_pending(self) -> List[Dict[str, Any]]:
         """Analyse every buffered district now, complete or not.
 

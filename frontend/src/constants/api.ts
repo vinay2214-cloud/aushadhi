@@ -1,18 +1,23 @@
+import { getPublicConfig } from "./runtime-config";
+
 /**
  * API origin resolution.
  *
- * VITE_API_BASE_URL is the source of truth. When it is absent (a plain
- * `bun run dev` with no .env.local), fall back to the backend's local port:
- * the dev server runs on :8080 or :5173, and the FastAPI backend answers on
- * :8000 in both cases.
+ * The base URL comes from `public.config.js`: NITRO_API_BASE_URL at runtime on
+ * the server (serialised into the SSR'd HTML for the browser), else the
+ * build-time VITE_API_BASE_URL. When neither is set it falls back to the
+ * local backend port -- the dev server runs on :8080 or :5173 and FastAPI
+ * answers on :8000 in both cases.
  */
-const ENV_BASE_URL = import.meta.env["VITE_API_BASE_URL"] as string | undefined;
-
 const LOCAL_BACKEND_URL = "http://localhost:8000";
 const LOCAL_DEV_ORIGINS = ["http://localhost:8080", "http://localhost:5173", "http://localhost:3000"];
 
-function resolveBaseUrl(): string {
-  if (ENV_BASE_URL && ENV_BASE_URL.trim()) return ENV_BASE_URL.trim().replace(/\/+$/, "");
+function resolveBaseUrl(configured: string): string {
+  const trimmed = configured.trim().replace(/\/+$/, "");
+  // public.config.js already substitutes LOCAL_BACKEND_URL when nothing is
+  // configured, so that exact value means "unset" and hands over to the
+  // origin heuristics below (which resolve to the same URL in local dev).
+  if (trimmed && trimmed !== LOCAL_BACKEND_URL) return trimmed;
 
   if (typeof window !== "undefined") {
     const origin = window.location.origin;
@@ -25,8 +30,25 @@ function resolveBaseUrl(): string {
   return LOCAL_BACKEND_URL;
 }
 
-export const API_BASE_URL = resolveBaseUrl();
-export const API_KEY = (import.meta.env["VITE_API_KEY"] as string | undefined) ?? "";
+/**
+ * Read on every call, not once at module load. The browser gets its values
+ * from the global that `RootShell` writes into the SSR'd HTML, and this module
+ * is imported by code that can evaluate before that script has run — a
+ * snapshot taken then would freeze in the empty build-time fallback and every
+ * request would go out with `X-API-Key: ""` (a 401 the dashboard reports as
+ * "Could not reach AUSHADHI API").
+ */
+export function getApiBaseUrl(): string {
+  return resolveBaseUrl(getPublicConfig().apiBaseUrl);
+}
+
+export function getApiKey(): string {
+  return getPublicConfig().apiKey || "";
+}
+
+/** Snapshots, for display only — request paths must call the getters above. */
+export const API_BASE_URL = getApiBaseUrl();
+export const API_KEY = getApiKey();
 
 export const ENDPOINTS = {
   health: "/health",

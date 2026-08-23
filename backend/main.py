@@ -1,13 +1,13 @@
 """AUSHADHI — FastAPI application entrypoint.
 
-Run locally:
-    cd backend && uvicorn main:app --reload
+Run locally — one command starts the whole system:
+    cd backend && uvicorn main:app --reload --port 8000
 
-Two run modes, selected by RUN_MODE:
-    api    (default) — serve HTTP only; a separate process runs the agents
-    agents           — also start the four Pub/Sub subscriber loops in-process,
-                       so one container runs the whole pipeline (handy for the
-                       demo, and for Cloud Run with a single service)
+The four Pub/Sub subscriber loops (DQMS, FORECAST, PROCUREMENT, ALERT) run as a
+background task inside this process, so there is no second worker process to
+start. Set AGENTS_IN_PROCESS=false to serve HTTP only — needed when running
+more than one API replica, since every replica would otherwise consume the same
+subscriptions and duplicate the Gemini calls.
 """
 
 import asyncio
@@ -32,13 +32,8 @@ API_V1_PREFIX = "/api/v1"
 #: dependency should report "timeout", not stall the probe.
 HEALTH_PROBE_TIMEOUT_SECONDS = 5.0
 
-_subscriber_task: Optional[asyncio.Task] = None
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _subscriber_task
-
     log.info(
         "aushadhi_api_starting",
         version=settings.app_version,
@@ -49,28 +44,24 @@ async def lifespan(app: FastAPI):
         gemini_model=settings.gemini_model,
         vertex_location=settings.vertex_location,
         api_key_configured=bool(settings.aushadhi_api_key),
+        agents_in_process=settings.agents_in_process,
     )
 
-    if settings.run_mode == "agents":
+    orchestrator = None
+    if settings.agents_in_process:
+        # Imported lazily so the module's Firestore/Pub/Sub clients are only
+        # built when the agents actually run.
         from agents.orchestrator import get_orchestrator
 
         orchestrator = get_orchestrator()
-        _subscriber_task = asyncio.create_task(
-            orchestrator.start_subscribers(), name="pubsub-subscribers"
-        )
-        log.info("aushadhi_subscribers_started_in_process")
+        orchestrator.start_background()
+    else:
+        log.warning("agent_orchestrator_disabled", reason="AGENTS_IN_PROCESS=false")
 
     yield
 
-    if _subscriber_task is not None:
-        from agents.orchestrator import get_orchestrator
-
-        await get_orchestrator().stop()
-        _subscriber_task.cancel()
-        try:
-            await _subscriber_task
-        except (asyncio.CancelledError, Exception):  # noqa: B014 - shutdown is best effort
-            pass
+    if orchestrator is not None:
+        await orchestrator.stop_background()
 
     log.info("aushadhi_api_stopped")
 
@@ -86,12 +77,17 @@ app = FastAPI(
 # therefore wraps the auth check — a rejected key still comes back with CORS
 # headers instead of surfacing in the browser as an opaque network error.
 app.add_middleware(APIKeyMiddleware)
+# allow_credentials=True makes the wildcard forms of allow_methods/allow_headers
+# reflect rather than emit "*", so the effective set is spelled out here: the
+# dashboard only ever issues these verbs, and X-API-Key is the header the auth
+# middleware reads (a preflight that omits it from allow_headers fails before
+# the real request is ever sent).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["X-API-Key", "Content-Type", "Authorization"],
 )
 
 app.include_router(api_router, prefix=API_V1_PREFIX)

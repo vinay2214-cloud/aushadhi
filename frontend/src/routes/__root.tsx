@@ -13,6 +13,14 @@ import { Toaster } from "react-hot-toast";
 
 import appCss from "../styles.css?url";
 import { reportRuntimeError } from "../lib/error-reporting";
+import { getPublicConfig, RUNTIME_CONFIG_GLOBAL } from "../constants/runtime-config";
+
+// Hand the server's runtime-resolved config (NITRO_*) to the browser, which has
+// no process.env. Escaping `<` keeps a value from closing the script tag early.
+function runtimeConfigScript(): string {
+  const json = JSON.stringify(getPublicConfig()).replace(/</g, "\\u003c");
+  return `window.${RUNTIME_CONFIG_GLOBAL}=${json};`;
+}
 
 function NotFoundComponent() {
   return (
@@ -117,6 +125,7 @@ function RootShell({ children }: { children: ReactNode }) {
       </head>
       <body>
         {children}
+        <script dangerouslySetInnerHTML={{ __html: runtimeConfigScript() }} />
         <Scripts />
       </body>
     </html>

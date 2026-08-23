@@ -20,6 +20,7 @@ from api.deps import (
     window_start_iso,
 )
 from api.schemas import AgentStatus, AgentStatusResponse, PaginatedResponse
+from config import settings
 from models.agent_log import AgentLog
 from services.firestore_service import FirestoreService
 from utils.logger import get_logger
@@ -47,6 +48,21 @@ def _health(runs: int, failures: int, in_flight: int) -> str:
     if failures >= runs:
         return "FAILING"
     return "DEGRADED"
+
+
+@router.get("/agents/orchestrator-status")
+async def orchestrator_status() -> Dict[str, Any]:
+    """Is the in-process agent orchestrator alive?
+
+    Distinct from /agents/status, which reports what the agents *did* (derived
+    from agent_logs). This reports whether the subscriber loops are running at
+    all, so the Pipeline page can show a "Pipeline Running" indicator rather
+    than silently displaying stale history.
+    """
+    from agents.orchestrator import get_orchestrator
+
+    status = get_orchestrator().background_status
+    return {**status, "agents_in_process": settings.agents_in_process, "checked_at": utc_now_iso()}
 
 
 @router.get("/agents/status", response_model=AgentStatusResponse)

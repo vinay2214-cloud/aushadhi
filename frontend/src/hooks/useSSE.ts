@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { API_BASE_URL, API_KEY } from "../constants/api";
+import { getApiBaseUrl, getApiKey } from "../constants/api";
 import { useUIStore } from "../store/uiStore";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
@@ -61,7 +61,12 @@ export function useSSE() {
       if (unmountedRef.current) return;
 
       setStatus("connecting");
-      const url = `${API_BASE_URL}/api/v1/stream?api_key=${encodeURIComponent(API_KEY)}`;
+      // Resolved at connect time so a reconnect picks up the runtime config
+      // even if it landed after this module was first evaluated. EventSource
+      // cannot set headers, so the key travels as a query param.
+      const key = getApiKey();
+      if (!key) console.error("[sse] api key is empty — the stream will be rejected");
+      const url = `${getApiBaseUrl()}/api/v1/stream?api_key=${encodeURIComponent(key)}`;
       const source = new EventSource(url);
       sourceRef.current = source;
 
