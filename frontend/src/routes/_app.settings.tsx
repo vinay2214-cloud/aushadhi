@@ -1,13 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { Loader2, Play, RotateCcw, Wifi } from "lucide-react";
+import { Cpu, Loader2, Play, RotateCcw, Wifi } from "lucide-react";
 import { LoadingSpinner } from "../components/shared/LoadingSpinner";
 import { ErrorState } from "../components/shared/ErrorState";
 import { DataQualityBar } from "../components/shared/DataQualityBar";
 import { TimeAgo } from "../components/shared/TimeAgo";
-import { fetchConfig, fetchDataQuality, resetDemo, testConnection } from "../api/metrics";
-import { runSentinel } from "../api/agents";
+import {
+  fetchConfig,
+  fetchDataQuality,
+  resetDemo,
+  testConnection,
+  updateConfig,
+} from "../api/metrics";
+import { runFullPipeline } from "../api/agents";
 import { API_BASE_URL } from "../constants/api";
 import { useUIStore } from "../store/uiStore";
 
@@ -46,10 +52,21 @@ function SettingsPage() {
     onError: () => toast.error("Reset failed"),
   });
 
+  // The full-pipeline trigger, not run-sentinel: it runs all five agents in
+  // one process so the Pipeline page fills in from a single click.
   const run = useMutation({
-    mutationFn: runSentinel,
-    onSuccess: () => toast.success("Pipeline run triggered"),
+    mutationFn: runFullPipeline,
+    onSuccess: () => toast.success("Pipeline started — all 5 agents running"),
     onError: () => toast.error("Could not start pipeline"),
+  });
+
+  const model = useMutation({
+    mutationFn: (useGemma: boolean) => updateConfig({ use_gemma_fallback: useGemma }),
+    onSuccess: (_data, useGemma) => {
+      toast.success(useGemma ? "Switched to Gemma 2" : "Switched to Gemini");
+      queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
+    onError: () => toast.error("Could not switch model"),
   });
 
   const ping = useMutation({
@@ -60,6 +77,9 @@ function SettingsPage() {
 
   const c = config.data;
   const reports = quality.data ?? [];
+  const gemmaActive = c?.gemma_fallback_enabled ?? false;
+  const geminiLabel = c?.gemini_model ?? "Gemini 3.5 Flash";
+  const gemmaLabel = c?.gemma_model ?? "Gemma 2";
 
   return (
     <div className="space-y-6">
@@ -86,7 +106,6 @@ function SettingsPage() {
                 ["Centers monitored", String(c?.centers_monitored ?? "—")],
                 ["Medicines tracked", String(c?.medicines_tracked ?? "—")],
                 ["Active model", c?.active_model ?? "—"],
-                ["Gemma fallback", c?.gemma_fallback_enabled ? "Enabled" : "Disabled"],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4 border-b border-white/[0.07] pb-1.5">
                   <dt className="text-slate-500">{k}</dt>
@@ -137,6 +156,61 @@ function SettingsPage() {
               Reset demo data
             </button>
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-white/[0.07] bg-[#111113] p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="card-label">AI Model</h2>
+            <p className="mt-1.5 text-[12px] text-slate-500">
+              Gemma runs from a regional Vertex endpoint — the fallback when Gemini is unavailable
+              or out of quota. Forecasting and outbreak detection both switch on the next call.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[12px] text-slate-300">
+              {gemmaActive ? gemmaLabel : geminiLabel}
+            </span>
+            {gemmaActive && (
+              <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide text-amber-400">
+                GEMMA
+              </span>
+            )}
+            {model.isPending && <Loader2 className="size-3.5 animate-spin text-slate-500" />}
+          </div>
+        </div>
+
+        <div
+          role="radiogroup"
+          aria-label="AI model"
+          className="mt-4 inline-flex rounded-md border border-white/[0.10] p-0.5"
+        >
+          {[
+            { gemma: false, label: "Gemini 3.5 Flash" },
+            { gemma: true, label: "Gemma 2 (offline)" },
+          ].map((option) => {
+            const selected = gemmaActive === option.gemma;
+            return (
+              <button
+                key={option.label}
+                role="radio"
+                aria-checked={selected}
+                disabled={model.isPending || config.isLoading}
+                onClick={() => !selected && model.mutate(option.gemma)}
+                className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-50 ${
+                  selected
+                    ? option.gemma
+                      ? "bg-amber-500/15 text-amber-300"
+                      : "bg-white/[0.08] text-slate-100"
+                    : "text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                <Cpu className="size-3.5" />
+                {option.label}
+              </button>
+            );
+          })}
         </div>
       </section>
 

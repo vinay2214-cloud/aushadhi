@@ -32,6 +32,32 @@ API_V1_PREFIX = "/api/v1"
 #: dependency should report "timeout", not stall the probe.
 HEALTH_PROBE_TIMEOUT_SECONDS = 5.0
 
+async def _load_runtime_config() -> None:
+    """Apply the runtime toggles stored in system_config/main_config.
+
+    Best-effort: a missing document or an unreachable Firestore leaves the
+    env-var defaults in place rather than blocking startup.
+    """
+    try:
+        from services.firestore_service import get_firestore_service
+
+        snap = await get_firestore_service().db.collection("system_config").document(
+            "main_config"
+        ).get()
+        stored = snap.to_dict() if snap.exists else None
+        if not stored:
+            return
+        if "use_gemma_fallback" in stored:
+            settings.use_gemma_fallback = bool(stored["use_gemma_fallback"])
+            log.info("runtime_config_loaded", use_gemma_fallback=settings.use_gemma_fallback)
+    except Exception as exc:
+        log.warning(
+            "runtime_config_load_failed",
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info(
@@ -42,10 +68,17 @@ async def lifespan(app: FastAPI):
         project=settings.google_cloud_project,
         region=settings.google_cloud_region,
         gemini_model=settings.gemini_model,
+        gemma_fallback=settings.use_gemma_fallback,
         vertex_location=settings.vertex_location,
         api_key_configured=bool(settings.aushadhi_api_key),
         agents_in_process=settings.agents_in_process,
     )
+
+    # The Gemma toggle is set at runtime via PATCH /api/v1/config, which
+    # writes it to Firestore. Reload it here so the choice survives a restart
+    # instead of silently reverting to whatever USE_GEMMA_FALLBACK was baked
+    # into the deployment's env vars.
+    await _load_runtime_config()
 
     orchestrator = None
     if settings.agents_in_process:
@@ -84,7 +117,7 @@ app.add_middleware(APIKeyMiddleware)
 # the real request is ever sent).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["X-API-Key", "Content-Type", "Authorization"],

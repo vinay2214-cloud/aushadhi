@@ -71,3 +71,13 @@ export async function runSentinel() {
   const { data } = await client.post(ENDPOINTS.runSentinel);
   return data;
 }
+
+/**
+ * Runs all five agents back to back inside the API process instead of handing
+ * the cycle to Pub/Sub, so the Pipeline page fills in from one click rather
+ * than depending on subscriber delivery timing.
+ */
+export async function runFullPipeline() {
+  const { data } = await client.post(ENDPOINTS.runFullPipeline);
+  return data;
+}

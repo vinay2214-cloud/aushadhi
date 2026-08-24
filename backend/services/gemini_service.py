@@ -389,12 +389,16 @@ class GeminiService:
         # on the free tier regardless of billing, which a single sentinel cycle
         # can exhaust. Vertex bills the GCP project directly and authenticates
         # with Application Default Credentials, so no API key is used here.
+        self.settings = settings
         self._client = client or genai.Client(
             vertexai=True,
             project=settings.google_cloud_project,
             location=settings.vertex_location,
         )
         self._model = settings.gemini_model
+        # Built on first Gemma call, then reused. Gemma answers from a
+        # regional endpoint, so it needs a second client with its own location.
+        self._gemma_client: Optional[genai.Client] = None
         self._limiter = _RateLimiter(settings.gemini_max_requests_per_minute)
         log.info(
             "gemini_service_initialized",
@@ -402,6 +406,7 @@ class GeminiService:
             auth="vertex_ai_adc",
             project=settings.google_cloud_project,
             location=settings.vertex_location,
+            gemma_fallback=settings.use_gemma_fallback,
             max_requests_per_minute=settings.gemini_max_requests_per_minute,
         )
 
@@ -409,23 +414,75 @@ class GeminiService:
     def client(self) -> genai.Client:
         return self._client
 
+    @property
+    def active_model(self) -> str:
+        """The model the next call will use — Gemma when the toggle is on."""
+        return self._get_client_and_model()[1]
+
+    # ─────────────────────── model selection / fallback ─────────────────
+
+    def _get_client_and_model(self) -> tuple:
+        """Return (client, model_name, is_gemma) for the current settings.
+
+        Read on every call rather than fixed at construction, so flipping
+        use_gemma_fallback (PATCH /api/v1/config) takes effect on the next
+        Gemini call without a restart. The injected client passed to
+        __init__ still wins for Gemini so tests can stub it.
+        """
+        if getattr(self.settings, "use_gemma_fallback", False):
+            if self._gemma_client is None:
+                # Gemma is served from a regional endpoint; vertex_location is
+                # "global", which is Gemini-only and 404s for Gemma.
+                self._gemma_client = genai.Client(
+                    vertexai=True,
+                    project=self.settings.google_cloud_project,
+                    location=self.settings.google_cloud_region,
+                )
+                log.info(
+                    "gemini_gemma_client_created",
+                    model=self.settings.gemma_model,
+                    location=self.settings.google_cloud_region,
+                )
+            return self._gemma_client, self.settings.gemma_model, True
+        return self._client, self._model, False
+
     # ────────────────────────── internal call ──────────────────────────
 
     def _generate(self, prompt: str, system_prompt: str, max_output_tokens: int):
-        """Blocking Gemini call with the validated config from AGENTS_SPEC.md."""
+        """Blocking model call with the validated config from AGENTS_SPEC.md."""
+        client, model, is_gemma = self._get_client_and_model()
         try:
-            return self._call(prompt, system_prompt, max_output_tokens)
+            return self._call(client, model, is_gemma, prompt, system_prompt, max_output_tokens)
         except Exception as exc:
             if _is_daily_quota_error(exc):
                 raise GeminiQuotaExhaustedError(
                     "Gemini daily free-tier request limit reached for "
-                    f"{self._model}; enable billing or wait for the quota reset"
+                    f"{model}; enable billing or wait for the quota reset"
                 ) from exc
             raise
 
-    def _call(self, prompt: str, system_prompt: str, max_output_tokens: int):
-        return self._client.models.generate_content(
-            model=self._model,
+    def _call(
+        self,
+        client: genai.Client,
+        model: str,
+        is_gemma: bool,
+        prompt: str,
+        system_prompt: str,
+        max_output_tokens: int,
+    ):
+        if is_gemma:
+            # Gemma takes none of the three Gemini-only options below: it has
+            # no thinking budget, no JSON response mode, and no system role.
+            # Sending them is a 400, so the system prompt is prepended to the
+            # user turn and the JSON contract is left to the prompt itself
+            # (_parse strips the markdown fence Gemma tends to add).
+            return client.models.generate_content(
+                model=model,
+                contents=f"{system_prompt}\n\n{prompt}",
+                config=types.GenerateContentConfig(max_output_tokens=max_output_tokens),
+            )
+        return client.models.generate_content(
+            model=model,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -448,6 +505,15 @@ class GeminiService:
             raise GeminiResponseError(
                 f"{operation}: empty Gemini response (finish_reason={finish_reason})"
             )
+        # Gemini answers with response_mime_type="application/json" and never
+        # fences its output; Gemma has no JSON mode and usually wraps it in
+        # ```json ... ```, which raw_decode cannot start on.
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
+            fence = text.rfind("```")
+            if fence != -1:
+                text = text[:fence]
+            text = text.strip()
         decoder = json.JSONDecoder()
         try:
             result, _end_index = decoder.raw_decode(text)
@@ -511,7 +577,7 @@ class GeminiService:
 
         log.info(
             "gemini_outbreak_detection",
-            model=self._model,
+            model=self.active_model,
             district=district,
             date=date,
             centers_analyzed=len(centers_data),
@@ -547,7 +613,7 @@ class GeminiService:
 
         log.info(
             "gemini_demand_forecast",
-            model=self._model,
+            model=self.active_model,
             center_id=center.get("id") or center.get("center_id"),
             medicine_id=medicine.get("id") or medicine.get("medicine_id"),
             medicine_name=medicine.get("name"),

@@ -1,6 +1,11 @@
 import client from "./client";
 import { ENDPOINTS } from "../constants/api";
-import type { DashboardMetrics, DataQualityReport, SystemConfig } from "../types/metrics";
+import type {
+  ConfigPatch,
+  DashboardMetrics,
+  DataQualityReport,
+  SystemConfig,
+} from "../types/metrics";
 import { unwrapArray } from "../lib/api-normalize";
 
 export async function fetchMetrics() {
@@ -23,7 +28,7 @@ export async function fetchConfig() {
   return data;
 }
 
-export async function updateConfig(payload: Partial<SystemConfig>) {
+export async function updateConfig(payload: ConfigPatch) {
   const { data } = await client.patch<SystemConfig>(ENDPOINTS.config, payload);
   return data;
 }

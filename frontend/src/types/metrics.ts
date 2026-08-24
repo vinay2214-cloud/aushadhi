@@ -23,6 +23,17 @@ export interface SystemConfig {
   centers_monitored: number;
   medicines_tracked: number;
   last_pipeline_run: string | null;
+  /** The model actually answering — gemma_model when the fallback is on. */
   active_model: string;
   gemma_fallback_enabled: boolean;
+  gemini_model?: string;
+  gemma_model?: string;
+}
+
+/**
+ * Body of PATCH /api/v1/config. The stored toggle is `use_gemma_fallback`;
+ * SystemConfig reports it back as the derived `gemma_fallback_enabled`.
+ */
+export interface ConfigPatch {
+  use_gemma_fallback?: boolean;
 }

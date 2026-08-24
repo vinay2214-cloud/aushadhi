@@ -64,6 +64,7 @@ export const ENDPOINTS = {
   config: "/api/v1/config",
   stream: "/api/v1/stream",
   runSentinel: "/api/v1/internal/run-sentinel",
+  runFullPipeline: "/api/v1/internal/run-full-pipeline",
   simulateOutbreak: "/api/v1/internal/simulate-outbreak",
   resetDemo: "/api/v1/internal/reset-demo",
 };

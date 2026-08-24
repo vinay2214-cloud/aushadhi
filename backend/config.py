@@ -70,26 +70,20 @@ class Settings(BaseSettings):
     agents_in_process: bool = True
     log_level: str = "INFO"
     environment: Literal["development", "staging", "production"] = "development"
-    # Browsers send the exact page origin, so every host the dashboard is
-    # served from has to be listed verbatim. Cloud Run answers on both URL
-    # forms for the same service (the project-number one and the legacy
-    # -mnpwpjt7xq-uc hash), and either can end up in the address bar — list
-    # both or a preflight from the other one comes back "Disallowed CORS
-    # origin". CORS_ORIGINS (comma-separated) overrides this default.
-    cors_origins: List[str] = [
-        "https://aushadhi-frontend-230802283586.us-central1.run.app",
-        "https://aushadhi-frontend-mnpwpjt7xq-uc.a.run.app",
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost:8080",  # Lovable dev server default
-    ]
-
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def _split_cors_origins(cls, value: object) -> object:
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    # CORS_ORIGINS (comma-separated) overrides this default; see
+    # cors_origins_list below for which origins have to be listed.
+    #
+    # Held as a plain comma-separated string, not List[str], on purpose:
+    # pydantic-settings JSON-decodes a complex-typed field's env value *before*
+    # any validator runs, so CORS_ORIGINS=https://one-url (no brackets, no
+    # trailing comma) raised SettingsError at import and the Cloud Run revision
+    # never started. A str field is taken verbatim; splitting happens below.
+    cors_origins: str = (
+        "http://localhost:8080,"
+        "http://localhost:5173,"
+        "http://localhost:3000,"
+        "https://aushadhi-frontend-230802283586.us-central1.run.app"
+    )
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -99,6 +93,23 @@ class Settings(BaseSettings):
         return value
 
     # ---- Derived helpers ----
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """CORS_ORIGINS split into the list CORSMiddleware wants.
+
+        Browsers send the exact page origin, so every host the dashboard is
+        served from has to be listed verbatim. Cloud Run answers on both URL
+        forms for the same service (the project-number one and the legacy
+        -mnpwpjt7xq-uc hash), and either can end up in the address bar — list
+        both or a preflight from the other one comes back "Disallowed CORS
+        origin". Falls back to the local dev origin rather than an empty list,
+        which would reject every browser request.
+        """
+        if not self.cors_origins:
+            return ["http://localhost:8080"]
+        origins = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        return origins if origins else ["http://localhost:8080"]
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"

@@ -1,16 +1,22 @@
 """AUSHADHI — internal trigger endpoints (Cloud Scheduler + demo controls).
 
-Both endpoints return 202 immediately and do the work in the background: a
-sentinel cycle takes tens of seconds and a reseed writes several hundred
-documents, neither of which should hold an HTTP connection open.
+Every endpoint returns 202 immediately and does the work in the background: a
+sentinel cycle takes tens of seconds, a full pipeline run takes minutes, and a
+reseed writes several hundred documents — none of which should hold an HTTP
+connection open.
+
+    run-sentinel        starts the cycle and lets Pub/Sub carry it downstream
+    run-full-pipeline   runs all five agents in this process, back to back
+    simulate-outbreak   reloads the Razole cholera scenario into Firestore
 """
 
 import asyncio
 import importlib.util
 import sys
 import uuid
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import APIRouter, Query, status
 
@@ -18,6 +24,7 @@ from api.deps import utc_now_iso
 from api.schemas import TriggerResponse
 from agents.orchestrator import get_orchestrator
 from config import PROJECT_ROOT
+from services.firestore_service import get_firestore_service
 from utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -72,6 +79,183 @@ async def run_sentinel(
     log.info("internal_sentinel_cycle_started", cycle_id=cycle_id, district=district or "ALL")
     return TriggerResponse(
         message="Sentinel cycle started",
+        cycle_id=cycle_id,
+        district=district or "ALL",
+        started_at=utc_now_iso(),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  FULL PIPELINE — all five agents, sequentially, in this process
+# ══════════════════════════════════════════════════════════════════════════
+#
+# run-sentinel publishes to Pub/Sub and the four subscriber loops carry the
+# cycle downstream. That is the production path, but it makes the Pipeline
+# page depend on subscriber delivery timing, and a cycle that loses one
+# message leaves later agents with nothing to show.
+#
+# This endpoint runs the same five agents against the same Firestore data,
+# handing each agent's outgoing message straight to the next one. Every agent
+# still goes through BaseAgent.run(), so each writes its own STARTED ->
+# COMPLETED agent_logs document exactly as it does under Pub/Sub — that is
+# what the Pipeline page reads.
+
+
+class _LocalBus:
+    """Stands in for PubSubService: captures published messages, sends nothing.
+
+    The agents are handed this instead of the real client so a full-pipeline
+    run stays inside this process. Publishing for real would put the same
+    messages in front of the orchestrator's subscriber loops, which would run
+    the whole chain a second time and double every Gemini call.
+    """
+
+    def __init__(self) -> None:
+        self.topics: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+    async def publish(
+        self, topic_name: str, message_dict: Dict[str, Any], **attributes: str
+    ) -> str:
+        self.topics[topic_name].append(message_dict)
+        return f"local-{uuid.uuid4().hex[:12]}"
+
+    def drain(self, topic_name: str) -> List[Dict[str, Any]]:
+        """Take everything queued on a topic, leaving it empty."""
+        return self.topics.pop(topic_name, [])
+
+
+async def _run_stage(agent, messages: List[Dict[str, Any]], cycle_id: str) -> int:
+    """Run one agent once per inbound message. Returns the number of runs.
+
+    A single center failing is not a reason to abandon the cycle — under
+    Pub/Sub the message would simply be nacked and the other centers would
+    carry on — so a raised agent is logged and the stage continues.
+    """
+    completed = 0
+    for message in messages:
+        try:
+            await agent.run(message.get("center_id"), message)
+            completed += 1
+        except Exception as exc:
+            log.error(
+                "full_pipeline_agent_failed",
+                cycle_id=cycle_id,
+                agent=agent.name,
+                center_id=message.get("center_id"),
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+    return completed
+
+
+async def _run_full_pipeline(cycle_id: str, district: Optional[str]) -> None:
+    """SENTINEL -> DQMS -> FORECAST -> PROCUREMENT -> ALERT, back to back."""
+    from agents.alert_agent import AlertReportAgent
+    from agents.dqms_agent import DQMSValidationAgent
+    from agents.forecast_agent import ForecastOutbreakAgent
+    from agents.procurement_agent import ProcurementAgent
+    from agents.sentinel_agent import InventorySentinelAgent
+
+    bus = _LocalBus()
+    firestore = get_firestore_service()
+    stages: Dict[str, int] = {}
+
+    log.info("full_pipeline_started", cycle_id=cycle_id, district=district or "ALL")
+
+    try:
+        # ── Agent 1: SENTINEL ── one run over every center in scope.
+        log.info("full_pipeline_phase", cycle_id=cycle_id, agent="SENTINEL")
+        sentinel = InventorySentinelAgent(firestore, bus)
+        result = await sentinel.scan_all_centers(district=district, cycle_id=cycle_id)
+        stages["sentinel"] = 1
+        alerts = bus.drain("sentinel-alerts")
+        log.info(
+            "full_pipeline_phase_done",
+            cycle_id=cycle_id,
+            agent="SENTINEL",
+            centers_scanned=result.get("centers_scanned"),
+            centers_alerting=result.get("centers_alerting"),
+            messages=len(alerts),
+        )
+
+        # ── Agent 2: DQMS ── one run per alerting center.
+        log.info("full_pipeline_phase", cycle_id=cycle_id, agent="DQMS", inbound=len(alerts))
+        dqms = DQMSValidationAgent(firestore, bus)
+        stages["dqms"] = await _run_stage(dqms, alerts, cycle_id)
+        validated = bus.drain("validated-data")
+
+        # ── Agent 3: FORECAST + OUTBREAK ── the Gemini stage.
+        # Under Pub/Sub this agent buffers a district until every center has
+        # reported before it runs detect_outbreak. Here the whole cycle is
+        # already in hand, so any buffer left over is flushed straight away
+        # rather than waiting on the orchestrator's 20s sweep.
+        log.info("full_pipeline_phase", cycle_id=cycle_id, agent="FORECAST", inbound=len(validated))
+        forecast = ForecastOutbreakAgent(firestore, bus)
+        stages["forecast"] = await _run_stage(forecast, validated, cycle_id)
+        try:
+            await forecast.flush_pending()
+        except Exception as exc:
+            log.error(
+                "full_pipeline_flush_failed",
+                cycle_id=cycle_id,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+        forecast_complete = bus.drain("forecast-complete")
+
+        # ── Agent 4: PROCUREMENT ── one run per center that got a forecast.
+        log.info(
+            "full_pipeline_phase",
+            cycle_id=cycle_id,
+            agent="PROCUREMENT",
+            inbound=len(forecast_complete),
+        )
+        procurement = ProcurementAgent(firestore, bus)
+        stages["procurement"] = await _run_stage(procurement, forecast_complete, cycle_id)
+        procured = bus.drain("procured")
+
+        # ── Agent 5: ALERT ── one run per purchase order raised.
+        log.info("full_pipeline_phase", cycle_id=cycle_id, agent="ALERT", inbound=len(procured))
+        alert = AlertReportAgent(firestore, bus)
+        stages["alert"] = await _run_stage(alert, procured, cycle_id)
+
+        skipped = [name for name, runs in stages.items() if runs == 0]
+        log.info(
+            "full_pipeline_completed",
+            cycle_id=cycle_id,
+            district=district or "ALL",
+            agents_run=sum(1 for runs in stages.values() if runs),
+            # A stage with no inbound messages never ran, so it will not appear
+            # on the Pipeline page. That means the stage above it produced
+            # nothing to act on (no alerting centers, nothing urgent enough to
+            # order), not that an agent is broken.
+            stages_skipped=skipped or None,
+            **{f"{name}_runs": runs for name, runs in stages.items()},
+        )
+    except Exception as exc:
+        log.error(
+            "full_pipeline_failed",
+            cycle_id=cycle_id,
+            stages_completed=stages,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+
+
+@router.post(
+    "/internal/run-full-pipeline",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=TriggerResponse,
+)
+async def run_full_pipeline(
+    district: Optional[str] = Query(None, description="Limit the run to one district"),
+) -> TriggerResponse:
+    """Run all five agents in sequence, without going through Pub/Sub."""
+    cycle_id = f"full_{uuid.uuid4().hex[:8]}"
+    _spawn(_run_full_pipeline(cycle_id, district), name=f"full-pipeline:{cycle_id}")
+    log.info("internal_full_pipeline_started", cycle_id=cycle_id, district=district or "ALL")
+    return TriggerResponse(
+        message="Full pipeline started — all 5 agents will run sequentially",
         cycle_id=cycle_id,
         district=district or "ALL",
         started_at=utc_now_iso(),
