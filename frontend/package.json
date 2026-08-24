@@ -1,5 +1,6 @@
 {
-  "name": "tanstack_start_ts",
+  "name": "aushadhi-frontend",
+  "description": "AUSHADHI — Autonomous Medicine Supply Intelligence Dashboard",
   "private": true,
   "sideEffects": false,
   "type": "module",

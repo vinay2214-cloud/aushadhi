@@ -16,6 +16,8 @@ frontend/.output/
 frontend/.nitro/
 ._*
 .DS_Store
+**/._*
+**/.DS_Store
 .vscode/
 .idea/
 *.log

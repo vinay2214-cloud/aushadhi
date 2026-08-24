@@ -598,6 +598,13 @@ Both prompts include seasonal context (monsoon, post-monsoon, winter, summer), d
 
 ### 🎬 [Demo Video → youtu.be/WIZl58Czcl0](https://youtu.be/WIZl58Czcl0)
 
+| Resource | Location |
+|----------|----------|
+| **Frontend** | https://aushadhi-frontend-230802283586.us-central1.run.app |
+| **API** | https://aushadhi-api-230802283586.us-central1.run.app |
+| **Source** | https://github.com/vinay2214-cloud/aushadhi |
+| **GCP project** | `aushadhi-hackathon-2026` (Cloud Run, `us-central1`) |
+
 ---
 
 ## Demo Scenario
